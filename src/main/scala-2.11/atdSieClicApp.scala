@@ -1,61 +1,123 @@
 import java.io.File
+
 import org.apache.pdfbox.multipdf.Splitter
 import org.apache.pdfbox.pdmodel.{PDDocument, PDPage}
 import org.apache.pdfbox.text.PDFTextStripper
+
+import scala.swing.{Dialog, FileChooser}
 
 /**
   * Created by jmarzin-cp on 23/02/2017.
   */
 object atdSieClicApp extends App {
 
-  val verso = PDDocument.load(new File("D:\\Bureau\\jmarzin-cp\\Mes Documents\\atdsieclic\\verso.pdf"))
-  val pageVerso = verso.getPage(0)
+  def getDirectoryListing(title: String = ""): (File, Option[Array[File]]) = {
+    val chooser = new FileChooser(null)
+    chooser.fileSelectionMode = FileChooser.SelectionMode.DirectoriesOnly
+    chooser.title = title
+    val result = chooser.showOpenDialog(null)
+    if (result == FileChooser.Result.Approve) {
+      (chooser.selectedFile, Some(chooser.selectedFile.listFiles().filter(f => f.isFile && f.getName.contains(".pdf"))))
+    } else (null, None)
+  }
 
-  val pageBlanche = new PDPage()
+  var retour: (File, Option[Array[File]]) = (null, None)
+  do retour = getDirectoryListing("Répertoire des ATD à traiter") while (retour._2.isEmpty)
+  val repertoire = retour._1
+  val listeFichiers = retour._2
+
+  if(listeFichiers.get.filter(_.getName == "verso.pdf").isEmpty) {
+    Dialog.showMessage(null, "Le fichier verso.pdf est absent.", title="Erreur")
+    System.exit(0)
+  }
 
   val dicoBulletinsRep = scala.collection.mutable.Map[String, List[PDPage]]()
-
-  val bulletinsRep = PDDocument.load(new File("D:\\Bureau\\jmarzin-cp\\Mes Documents\\atdsieclic\\bulletin réponse.pdf"))
-  val pagesBulletinsRep = (new Splitter).split(bulletinsRep).toArray()
+  val dicoAtd = scala.collection.mutable.Map[String,PDPage]()
   var debiteur = ""
-  for(page<-pagesBulletinsRep){
-    val texte = (new PDFTextStripper).getText(page.asInstanceOf[PDDocument]).split("montant des impôts dus par :\\r\\n")
-    if(texte(0).contains("BULLETIN-REPONSE A L'AVIS A TIERS DETENTEUR")){
-      debiteur = texte(1).split("\\(1")(0).replaceAll("\r\n"," ")
-      if (dicoBulletinsRep.get(debiteur).isDefined){
-        dicoBulletinsRep(debiteur) = dicoBulletinsRep(debiteur) :+ page.asInstanceOf[PDDocument].getPage(0)
-      } else {
-        dicoBulletinsRep += (debiteur -> List(page.asInstanceOf[PDDocument].getPage(0)))
-      }
-    } else {
-        dicoBulletinsRep(debiteur) = dicoBulletinsRep(debiteur) :+ page.asInstanceOf[PDDocument].getPage(0)
-    }
-  }
-
-  val atd = PDDocument.load(new File("D:\\Bureau\\jmarzin-cp\\Mes Documents\\atdsieclic\\ATD recto.pdf"))
-  val pagesAtd = (new Splitter).split(atd).toArray()
+  var pageVerso = new PDPage
+  val pageBlanche = new PDPage()
   var titre = ""
   val docsOriginaux = new PDDocument()
-  val docCopies = new PDDocument()
+  val docsCopies = new PDDocument()
+  val alaLigne = sys.props("line.separator")
 
-  for(page<-pagesAtd){
-    val texte = (new PDFTextStripper).getText(page.asInstanceOf[PDDocument]).split("\\r\\n\\(1\\).*?demeurant.*?à  ")
-    val debiteur = (texte(0).split("\\r\\n").last.replaceFirst("né\\(.*$","").trim + " " +
-      texte(1).split("\\r\\n").head.trim).replaceAll(" +"," ")
-    if(texte(0).startsWith("N° 3735 Original")){
-      titre = "Original"
-      docsOriginaux.addPage(page.asInstanceOf[PDDocument].getPage(0))
-      docsOriginaux.addPage(pageVerso)
-    } else if(texte(0).startsWith("N° 3735 Ampliation")){
-      titre = "Ampliation"
-      docCopies.addPage(page.asInstanceOf[PDDocument].getPage(0))
-      docCopies.addPage(pageBlanche)
+  for(file <- listeFichiers.get) {
+    val fichier = PDDocument.load(file)
+    val pages = (new Splitter).split(fichier)
+    val textePremierePage = (new PDFTextStripper).getText(pages.get(0))
+    if(textePremierePage.contains("BULLETIN-REPONSE A L'AVIS A TIERS DETENTEUR")) {
+      println("fichier Bulletin réponse trouvé")
+      for(ipage<-0 until pages.size()) {
+        val texte = (new PDFTextStripper).getText(pages.get(ipage)).split("montant des impôts dus par :"+alaLigne)
+        if(texte(0).contains("BULLETIN-REPONSE A L'AVIS A TIERS DETENTEUR")){
+          debiteur = texte(1).split("\\(1")(0).replaceAll(alaLigne," ").trim
+          if (dicoBulletinsRep.get(debiteur).isDefined){
+            dicoBulletinsRep(debiteur) = dicoBulletinsRep(debiteur) :+ pages.get(ipage).getPage(0)
+          } else {
+            dicoBulletinsRep += (debiteur -> List(pages.get(ipage).getPage(0)))
+          }
+        } else {
+          dicoBulletinsRep(debiteur) = dicoBulletinsRep(debiteur) :+ pages.get(ipage).getPage(0)
+        }
+      }
+    } else if(textePremierePage.contains("N° 3735 Original")) {
+      println("fichier Atd trouvé")
+      for(ipage <-0 until pages.size()) {
+        val texte = (new PDFTextStripper).getText(pages.get(ipage)).split(alaLigne + "\\(1\\).*?demeurant.*?à  ")
+        val debiteur = (texte(0).split(alaLigne).last.replaceFirst("né\\(.*$", "").trim + " " +
+          texte(1).split(alaLigne).head.trim).replaceAll(" +", " ")
+        if (texte(0).startsWith("N° 3735 Original")) {
+          if(dicoAtd.get(debiteur).isEmpty) dicoAtd += (debiteur -> pages.get(ipage).getPage(0))
+        } else if (texte(0).startsWith("N° 3735 Ampliation")) {
+          docsCopies.addPage(pages.get(ipage).getPage(0))
+          docsCopies.addPage(pageBlanche)
+        }
+      }
+    } else if(textePremierePage.contains("N° 3738 Original")) {
+      println("fichier Notifications trouvé")
+      titre = ""
+      for(ipage <- 0 until pages.size()) {
+        val texte = (new PDFTextStripper).getText(pages.get(ipage))
+        if(texte.contains("N° 3738 Original")) titre = "original"
+        else if(texte.contains("N° 3738 Ampliation")) titre = "ampliation"
+        titre match {
+          case "orginal" =>
+            docsOriginaux.addPage(pages.get(ipage).getPage(0))
+            docsOriginaux.addPage(pageVerso)
+          case _ =>
+            docsCopies.addPage(pages.get(ipage).getPage(0))
+            docsCopies.addPage(pageBlanche)
+        }
+      }
+    } else if(file.getName == "verso.pdf") {
+      pageVerso = pages.get(0).getPage(0)
+      println("fichier Verso trouvé")
     }
-    val adresse = texte(0).split("\\r\\n").last + " " + texte(1).split("\\r\\n").head
-    println(adresse)
+    fichier.close()
   }
+
+  dicoAtd.foreach(atd => {
+    docsOriginaux.addPage(atd._2)
+    docsOriginaux.addPage(pageVerso)
+    if (dicoBulletinsRep.get(atd._1).isEmpty) println("bulletin réponse non trouvé")
+    else {
+      docsOriginaux.addPage(dicoBulletinsRep(atd._1).head)
+      docsOriginaux.addPage(pageBlanche)
+      dicoBulletinsRep(atd._1) = dicoBulletinsRep(atd._1).tail
+    }
+  })
+  dicoBulletinsRep.foreach(listeBulletins => {
+    if (listeBulletins._2.nonEmpty) {
+      println("des bulletins sont en trop !")
+      listeBulletins._2.foreach(bulletin => {
+        docsOriginaux.addPage(bulletin)
+        docsOriginaux.addPage(pageBlanche)
+      })
+    }
+  })
+
   //for(i<-0 until docCopies.getNumberOfPages)docsOriginaux.addPage(docCopies.getPage(i))
-  docsOriginaux.save("D:\\Bureau\\jmarzin-cp\\Mes Documents\\atdsieclic\\originaux.pdf")
-  docCopies.save("D:\\Bureau\\jmarzin-cp\\Mes Documents\\atdsieclic\\copies.pdf")
+  docsOriginaux.save("originaux.pdf")
+  docsCopies.save("copies.pdf")
   //openoffice.org3 "macro:///Standard.Module1.findandreplace" file.doc
 }
