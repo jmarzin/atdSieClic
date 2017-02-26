@@ -1,9 +1,9 @@
 import java.io.File
 
-import org.apache.pdfbox.multipdf.Splitter
-import org.apache.pdfbox.pdmodel.{PDDocument, PDPage}
-import org.apache.pdfbox.text.PDFTextStripper
-
+import org.pdfclown.documents.Page
+import org.pdfclown.files._
+import org.pdfclown.tools.TextExtractor
+import scala.collection.mutable
 import scala.swing.{Dialog, FileChooser}
 
 /**
@@ -24,85 +24,105 @@ object atdSieClicApp extends App {
   var retour: (File, Option[Array[File]]) = (null, None)
   do retour = getDirectoryListing("Répertoire des ATD à traiter") while (retour._2.isEmpty)
   val repertoire = retour._1
-  val listeFichiers = retour._2
+  val listeFichiers = retour._2.get
 
-  if(listeFichiers.get.filter(_.getName == "verso.pdf").isEmpty) {
+  if(listeFichiers.filter(_.getName == "verso.pdf").isEmpty) {
     Dialog.showMessage(null, "Le fichier verso.pdf est absent.", title="Erreur")
     System.exit(0)
   }
+  val pageVerso = new org.pdfclown.files.File(listeFichiers.filter(_.getName == "verso.pdf").head.getCanonicalPath).getDocument.getPages.get(0)
 
-  val dicoBulletinsRep = scala.collection.mutable.Map[String, List[PDPage]]()
-  val dicoAtd = scala.collection.mutable.Map[String,PDPage]()
+
+  val dicoBulletinsRep = scala.collection.mutable.Map[String, List[Page]]()
+  val dicoAtd = scala.collection.mutable.Map[String,Page]()
   var debiteur = ""
-  var pageVerso = new PDPage
-  val pageBlanche = new PDPage()
   var titre = ""
-  val docsOriginaux = new PDDocument()
-  val docsCopies = new PDDocument()
+  val fichierOriginaux = new org.pdfclown.files.File()
+  val docsOriginaux = fichierOriginaux.getDocument()
+  val fichierCopies = new org.pdfclown.files.File()
+  val docsCopies = fichierCopies.getDocument()
   val alaLigne = sys.props("line.separator")
+  val listeFichiersLus = new mutable.Stack[org.pdfclown.files.File]()
 
-  for(file <- listeFichiers.get) {
-    val fichier = PDDocument.load(file)
-    val pages = (new Splitter).split(fichier)
-    val textePremierePage = (new PDFTextStripper).getText(pages.get(0))
-    if(textePremierePage.contains("BULLETIN-REPONSE A L'AVIS A TIERS DETENTEUR")) {
+  for(file <- listeFichiers) {
+    val fic = new org.pdfclown.files.File(file.getCanonicalPath)
+    val fichier = fic.getDocument
+    listeFichiersLus.push(fic)
+    val pages = fichier.getPages
+    var texte = new TextExtractor().extract(pages.get(0).getContents)
+    var chaine = ""
+    for(i <- 0 until texte.get(null).size()) chaine += texte.get(null).get(i).getText
+    if(chaine.contains("BULLETIN-REPONSE A L'AVIS A TIERS DETENTEUR")) {
       println("fichier Bulletin réponse trouvé")
-      for(ipage<-0 until pages.size()) {
-        val texte = (new PDFTextStripper).getText(pages.get(ipage)).split("montant des impôts dus par :"+alaLigne)
-        if(texte(0).contains("BULLETIN-REPONSE A L'AVIS A TIERS DETENTEUR")){
-          debiteur = texte(1).split("\\(1")(0).replaceAll(alaLigne," ").trim
-          if (dicoBulletinsRep.get(debiteur).isDefined){
-            dicoBulletinsRep(debiteur) = dicoBulletinsRep(debiteur) :+ pages.get(ipage).getPage(0)
+      for(ipage <- 0 until pages.size) {
+        texte = new TextExtractor().extract(pages.get(ipage).getContents)
+        chaine = ""
+        for(i <- 0 until texte.get(null).size()) chaine += texte.get(null).get(i).getText
+          if(chaine.contains("BULLETIN-REPONSE A L'AVIS A TIERS DETENTEUR")) {
+            // 15, 14 et 13 mais est-ce tout le temps ?
+          debiteur = texte.get(null).get(15).getText + " " +
+            texte.get(null).get(14).getText + " " +
+            texte.get(null).get(13).getText
+          debiteur = debiteur.replaceAll("  ", " ").trim
+          if (dicoBulletinsRep.get(debiteur).isDefined) {
+            dicoBulletinsRep(debiteur) = dicoBulletinsRep(debiteur) :+ pages.get(ipage)
           } else {
-            dicoBulletinsRep += (debiteur -> List(pages.get(ipage).getPage(0)))
+            dicoBulletinsRep += (debiteur -> List(pages.get(ipage)))
           }
         } else {
-          dicoBulletinsRep(debiteur) = dicoBulletinsRep(debiteur) :+ pages.get(ipage).getPage(0)
+          dicoBulletinsRep(debiteur) = dicoBulletinsRep(debiteur) :+ pages.get(ipage)
         }
       }
-    } else if(textePremierePage.contains("N° 3735 Original")) {
+    } else if(chaine.contains("N° 3735 Original")) {
       println("fichier Atd trouvé")
       for(ipage <-0 until pages.size()) {
-        val texte = (new PDFTextStripper).getText(pages.get(ipage)).split(alaLigne + "\\(1\\).*?demeurant.*?à  ")
-        val debiteur = (texte(0).split(alaLigne).last.replaceFirst("né\\(.*$", "").trim + " " +
-          texte(1).split(alaLigne).head.trim).replaceAll(" +", " ")
-        if (texte(0).startsWith("N° 3735 Original")) {
-          if(dicoAtd.get(debiteur).isEmpty) dicoAtd += (debiteur -> pages.get(ipage).getPage(0))
-        } else if (texte(0).startsWith("N° 3735 Ampliation")) {
-          docsCopies.addPage(pages.get(ipage).getPage(0))
-          docsCopies.addPage(pageBlanche)
+        var chaine = ""
+        texte = new TextExtractor().extract(pages.get(ipage).getContents)
+        for(i <- 0 until texte.get(null).size()) chaine += texte.get(null).get(i).getText
+        val modele = """.*Madame, Monsieur, (.*)  né.*demeurant  à  (.*) est  redevable.*""".r
+        chaine match {
+          case modele(nom,adresse) => debiteur = (nom + " " + adresse).replaceAll(" +"," ").trim
+          case _ => debiteur = ""
+        }
+        if (chaine.contains("N° 3735 Original")) {
+          if(dicoAtd.get(debiteur).isEmpty) dicoAtd += (debiteur -> pages.get(ipage))
+        } else if (chaine.contains("N° 3735 Ampliation")) {
+          docsCopies.getPages.add(pages.get(ipage).clone(docsCopies))
+          docsCopies.getPages.add(new Page(docsCopies))
         }
       }
-    } else if(textePremierePage.contains("N° 3738 Original")) {
+    } else if(chaine.contains("N° 3738 Original")) {
       println("fichier Notifications trouvé")
       titre = ""
       for(ipage <- 0 until pages.size()) {
-        val texte = (new PDFTextStripper).getText(pages.get(ipage))
-        if(texte.contains("N° 3738 Original")) titre = "original"
-        else if(texte.contains("N° 3738 Ampliation")) titre = "ampliation"
+        var chaine = ""
+        texte = new TextExtractor().extract(pages.get(ipage).getContents)
+        for(i <- 0 until texte.get(null).size()) chaine += texte.get(null).get(i).getText
+        if(chaine.contains("N° 3738 Original")) titre = "original"
+        else if(chaine.contains("N° 3738 Ampliation")) titre = "ampliation"
         titre match {
-          case "orginal" =>
-            docsOriginaux.addPage(pages.get(ipage).getPage(0))
-            docsOriginaux.addPage(pageVerso)
+          case "original" =>
+            docsOriginaux.getPages.add(pages.get(ipage).clone(docsOriginaux))
+            docsOriginaux.getPages.add(pageVerso.clone(docsOriginaux))
           case _ =>
-            docsCopies.addPage(pages.get(ipage).getPage(0))
-            docsCopies.addPage(pageBlanche)
+            docsCopies.getPages.add(pages.get(ipage).clone(docsCopies))
+            docsCopies.getPages.add(new Page(docsCopies))
         }
       }
     } else if(file.getName == "verso.pdf") {
-      pageVerso = pages.get(0).getPage(0)
+      // déjà traité plus haut
       println("fichier Verso trouvé")
     }
-    fichier.close()
+    //fic.close()
   }
 
   dicoAtd.foreach(atd => {
-    docsOriginaux.addPage(atd._2)
-    docsOriginaux.addPage(pageVerso)
+    docsOriginaux.getPages.add(atd._2.clone(docsOriginaux))
+    docsOriginaux.getPages.add(pageVerso.clone(docsOriginaux))
     if (dicoBulletinsRep.get(atd._1).isEmpty) println("bulletin réponse non trouvé")
     else {
-      docsOriginaux.addPage(dicoBulletinsRep(atd._1).head)
-      docsOriginaux.addPage(pageBlanche)
+      docsOriginaux.getPages.add(dicoBulletinsRep(atd._1).head.clone(docsOriginaux))
+      docsOriginaux.getPages.add(new Page(docsOriginaux))
       dicoBulletinsRep(atd._1) = dicoBulletinsRep(atd._1).tail
     }
   })
@@ -110,14 +130,25 @@ object atdSieClicApp extends App {
     if (listeBulletins._2.nonEmpty) {
       println("des bulletins sont en trop !")
       listeBulletins._2.foreach(bulletin => {
-        docsOriginaux.addPage(bulletin)
-        docsOriginaux.addPage(pageBlanche)
+        docsOriginaux.getPages.add(bulletin.clone(docsOriginaux))
+        docsOriginaux.getPages.add(new Page(docsOriginaux))
       })
     }
   })
 
-  //for(i<-0 until docCopies.getNumberOfPages)docsOriginaux.addPage(docCopies.getPage(i))
-  docsOriginaux.save("originaux.pdf")
-  docsCopies.save("copies.pdf")
-  //openoffice.org3 "macro:///Standard.Module1.findandreplace" file.doc
+  fichierOriginaux.save(
+    new java.io.File("originaux.pdf"),
+    SerializationModeEnum.Standard
+  )
+  fichierOriginaux.close()
+
+  fichierCopies.save(
+    new java.io.File("copies.pdf"),
+    SerializationModeEnum.Standard
+  )
+  fichierCopies.close()
+
+  while(listeFichiersLus.nonEmpty)listeFichiersLus.pop.close()
+
+  println("fini")
 }
