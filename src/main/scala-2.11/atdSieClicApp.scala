@@ -138,16 +138,10 @@ object atdSieClicApp extends App {
     }
   })
 
-  fichierOriginaux.save(
-    new java.io.File("originaux.pdf"),
-    SerializationModeEnum.Standard
-  )
+  docsOriginaux.getFile.save("originaux.pdf",SerializationModeEnum.Standard)
   fichierOriginaux.close()
 
-  fichierCopies.save(
-    new java.io.File("copies.pdf"),
-    SerializationModeEnum.Standard
-  )
+  docsCopies.getFile.save("copies.pdf",SerializationModeEnum.Standard)
   fichierCopies.close()
 
   while(listeFichiersLus.nonEmpty)listeFichiersLus.pop.close()
