@@ -26,7 +26,7 @@ object atdSieClicApp extends App {
   val repertoire = retour._1
   val listeFichiers = retour._2.get
 
-  if(listeFichiers.filter(_.getName == "verso.pdf").isEmpty) {
+  if(!listeFichiers.exists(_.getName == "verso.pdf")) {
     Dialog.showMessage(null, "Le fichier verso.pdf est absent.", title="Erreur")
     System.exit(0)
   }
@@ -38,9 +38,11 @@ object atdSieClicApp extends App {
   var debiteur = ""
   var titre = ""
   val fichierOriginaux = new org.pdfclown.files.File()
-  val docsOriginaux = fichierOriginaux.getDocument()
+  val docsOriginaux = fichierOriginaux.getDocument
+  val pagesOriginaux = docsOriginaux.getPages
   val fichierCopies = new org.pdfclown.files.File()
-  val docsCopies = fichierCopies.getDocument()
+  val docsCopies = fichierCopies.getDocument
+  val pagesCopies = docsCopies.getPages
   val alaLigne = sys.props("line.separator")
   val listeFichiersLus = new mutable.Stack[org.pdfclown.files.File]()
 
@@ -87,8 +89,8 @@ object atdSieClicApp extends App {
         if (chaine.contains("N° 3735 Original")) {
           if(dicoAtd.get(debiteur).isEmpty) dicoAtd += (debiteur -> pages.get(ipage))
         } else if (chaine.contains("N° 3735 Ampliation")) {
-          docsCopies.getPages.add(pages.get(ipage).clone(docsCopies))
-          docsCopies.getPages.add(new Page(docsCopies))
+          pagesCopies.add(pages.get(ipage).clone(docsCopies))
+          pagesCopies.add(new Page(docsCopies))
         }
       }
     } else if(chaine.contains("N° 3738 Original")) {
@@ -102,11 +104,11 @@ object atdSieClicApp extends App {
         else if(chaine.contains("N° 3738 Ampliation")) titre = "ampliation"
         titre match {
           case "original" =>
-            docsOriginaux.getPages.add(pages.get(ipage).clone(docsOriginaux))
-            docsOriginaux.getPages.add(pageVerso.clone(docsOriginaux))
+            pagesOriginaux.add(pages.get(ipage).clone(docsOriginaux))
+            pagesOriginaux.add(pageVerso.clone(docsOriginaux))
           case _ =>
-            docsCopies.getPages.add(pages.get(ipage).clone(docsCopies))
-            docsCopies.getPages.add(new Page(docsCopies))
+            pagesCopies.add(pages.get(ipage).clone(docsCopies))
+            pagesCopies.add(new Page(docsCopies))
         }
       }
     } else if(file.getName == "verso.pdf") {
@@ -117,12 +119,12 @@ object atdSieClicApp extends App {
   }
 
   dicoAtd.foreach(atd => {
-    docsOriginaux.getPages.add(atd._2.clone(docsOriginaux))
-    docsOriginaux.getPages.add(pageVerso.clone(docsOriginaux))
+    pagesOriginaux.add(atd._2.clone(docsOriginaux))
+    pagesOriginaux.add(pageVerso.clone(docsOriginaux))
     if (dicoBulletinsRep.get(atd._1).isEmpty) println("bulletin réponse non trouvé")
     else {
-      docsOriginaux.getPages.add(dicoBulletinsRep(atd._1).head.clone(docsOriginaux))
-      docsOriginaux.getPages.add(new Page(docsOriginaux))
+      pagesOriginaux.add(dicoBulletinsRep(atd._1).head.clone(docsOriginaux))
+      pagesOriginaux.add(new Page(docsOriginaux))
       dicoBulletinsRep(atd._1) = dicoBulletinsRep(atd._1).tail
     }
   })
@@ -130,8 +132,8 @@ object atdSieClicApp extends App {
     if (listeBulletins._2.nonEmpty) {
       println("des bulletins sont en trop !")
       listeBulletins._2.foreach(bulletin => {
-        docsOriginaux.getPages.add(bulletin.clone(docsOriginaux))
-        docsOriginaux.getPages.add(new Page(docsOriginaux))
+        pagesOriginaux.add(bulletin.clone(docsOriginaux))
+        pagesOriginaux.add(new Page(docsOriginaux))
       })
     }
   })
